@@ -1,0 +1,100 @@
+#!/usr/bin/perl -w
+# -*-  perl -*-
+
+=head1 NAME
+
+boxbackup - Munin plugin to monitor boxbackup storage usage 
+
+=head1 APPLICABLE SYSTEMS
+
+Every Linux system with boxbackup (client) installed.
+
+=head1 CONFIGURATION
+
+=head1 USAGE
+
+Link this plugin to /etc/munin/plugins/ and restart the munin-node.
+
+=head1 VERSION
+
+0.1
+
+=head1 AUTHOR
+
+Daniel Danner <daniel@danner.de>
+
+=head1 LICENSE
+
+GPLv2
+
+=cut
+
+use strict;
+use Munin::Plugin;
+
+my $mode = ($ARGV[0] or "print");
+
+if ($mode eq 'config' ) {
+    print "graph_title Boxbackup storage usage\n";
+    print "graph_args --base 1024 -l 0\n";
+    print "graph_vlabel Bytes\n";
+    print "graph_scale yes\n";
+    print "graph_category other\n";
+}
+
+my $used = 0;
+my $softlimit = 0;
+my $drawtype = 'AREA';
+my $values = {};
+
+# Read from bbackupquery
+open (CMD, "-|", "/usr/sbin/bbackupquery", "-q", "usage -m", "quit", "2>/dev/null") or die "Unable run and read output from bbackupquery: $!";
+while (<CMD>) {
+    m/^([^:]+): ([0-9]+) ([a-zA-Z]+), ([0-9]+)%$/ or die "Unexpected line in output";
+    my $keystr = $1;
+    my $value = $2;
+    my $unit = $3;
+    # my $percent = $4; # not used
+
+    if ($unit ne "kB") {
+        die "Unexpected output format: Unit is not kB";
+    }
+
+    # Convert to bytes
+    $value *= 1024;
+
+    my $ds = $keystr;
+    $ds =~ s/ ([a-z]?)/uc($1)/ge;
+    $ds = clean_fieldname($ds);
+
+    $values->{$ds} = $value;
+}
+close CMD;
+
+# Calculate used percentage of soft limit (not plotted, just used for thresholds)
+my $usage = $values->{'Used'} / $values->{'SoftLimit'} * 100;
+
+if ($mode eq 'config') {
+    print "current.label Current files\n";
+    print "current.draw AREA\n";
+    print "old.label Old files\n";
+    print "old.draw STACK\n";
+    print "deleted.label Deleted files\n";
+    print "deleted.draw STACK\n";
+    print "softlimit.label Soft limit\n";
+    print "softlimit.draw LINE1\n";
+    print "hardlimit.label Hard limit\n";
+    print "hardlimit.draw LINE1\n";
+    print "usage.label Usage (of soft limit) in %\n";
+    print "usage.draw LINE0\n"; # do not draw it
+    print_thresholds("usage", undef, undef, 92, 98);
+} else {
+    print "current.value ", ($values->{'Used'} - $values->{'OldFiles'} - $values->{'DeletedFiles'}), "\n";
+    print "old.value ", $values->{'OldFiles'}, "\n";
+    print "deleted.value ", $values->{'DeletedFiles'}, "\n";
+    print "softlimit.value ", $values->{'SoftLimit'}, "\n";
+    print "hardlimit.value ", $values->{'HardLimit'}, "\n";
+    printf "usage.value %3.2f\n", $usage;
+}
+
+# vim: ft=perl : sw=4 : ts=4 : et
